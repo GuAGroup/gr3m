@@ -1,0 +1,30 @@
+{
+  "configName": "Ggroup Main Node",
+  "serverIps": [
+    "192.168.1.1",
+    "1.1.1.1"
+  ],
+  "ports": [
+    443,
+    8080
+  ],
+  "dnsServers": [
+    "8.8.8.8",
+    "1.1.1.1"
+  ],
+  "publicKey": "Z3J1ZW0tcHJvdG8ta2V5LWV4YW1wbGU=",
+  "peers": [
+    {
+      "id": "peer-01",
+      "address": "45.67.89.10",
+      "port": 51820,
+      "publicKey": "R2dyb3VwLUtleQ==" 
+    }
+  ],
+  "protocol": {
+    "version": "1.0.0",
+    "timeoutSeconds": 30,
+    "useTls": true
+  },
+  "hysteria": true
+}
