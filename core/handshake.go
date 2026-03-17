@@ -6,49 +6,66 @@ package core
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"gr3m/key"
 	"net"
 )
+
+const ProtocolVersion = "GR3M-v1-SECURE"
 
 type SessionResult struct {
 	EncryptionKey []byte
 }
 
 func PerformHandshake(conn net.Conn, isServer bool) (*SessionResult, error) {
-
 	priv, err, pub := key.GenPrvKeyAndPublic()
+	if err != nil {
+		return nil, fmt.Errorf("failed to gen keys: %v", err)
+	}
+
+	var theirPub [32]byte
+
+	if isServer {
+
+		buf := make([]byte, 512)
+		n, err := conn.Read(buf)
+		if err != nil || n < len(ProtocolVersion)+32 {
+			return nil, errors.New("invalid handshake header")
+		}
+
+		if string(buf[:len(ProtocolVersion)]) != ProtocolVersion {
+			return nil, errors.New("protocol version mismatch")
+		}
+		copy(theirPub[:], buf[n-32:])
+
+		response := "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+		conn.Write(append([]byte(response), pub[:]...))
+
+	} else {
+
+		request := fmt.Sprintf("GET /stream HTTP/1.1\r\nUpgrade: websocket\r\nHost: gr3m-node\r\n\r\n")
+
+		payload := append([]byte(ProtocolVersion), []byte(request)...)
+		conn.Write(append(payload, pub[:]...))
+
+		buf := make([]byte, 512)
+		n, err := conn.Read(buf)
+		if err != nil || n < 32 {
+			return nil, errors.New("server rejected handshake")
+		}
+
+		copy(theirPub[:], buf[n-32:])
+	}
+
+	shared, err := key.GenSecretKey(theirPub, priv)
 	if err != nil {
 		return nil, err
 	}
 
-	var theirPub [32]byte
-	protoHeader := []byte("GR3M-V1-SECURE")
+	hasher := sha256.New()
+	hasher.Write(shared[:])
+	sessionKey := hasher.Sum(nil)
 
-	if isServer {
-		buf := make([]byte, 1024)
-		n, _ := conn.Read(buf)
-
-		if n < len(protoHeader)+32 {
-			return nil, fmt.Errorf("incompatible protocol")
-		}
-		copy(theirPub[:], buf[n-32:])
-
-		resp := "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
-		conn.Write(append([]byte(resp), pub[:]...))
-	} else {
-
-		req := "GET /stream HTTP/1.1\r\nUpgrade: websocket\r\n\r\n"
-		conn.Write(append([]byte(req), pub[:]...))
-
-		buf := make([]byte, 1024)
-		n, _ := conn.Read(buf)
-		copy(theirPub[:], buf[n-32:])
-	}
-
-	shared, _ := key.GenSecretKey(theirPub, priv)
-
-	finalKey := sha256.Sum256(shared[:])
-
-	return &SessionResult{EncryptionKey: finalKey[:]}, nil
+	return &SessionResult{EncryptionKey: sessionKey}, nil
 }
