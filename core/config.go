@@ -6,26 +6,25 @@ package core
 
 import (
 	"encoding/json"
-	"net"
 	"os"
-	"time"
 )
 
 type Peer struct {
-	Name string `json:"name"`
-	Addr string `json:"addr"`
+	Name   string `json:"name"`
+	Addr   string `json:"addr"`
+	PubKey string `json:"pub_key"`
 }
 
 type Config struct {
-	Mode        string `json:"mode"`
-	ListenAddr  string `json:"listen_addr"`
-	Peers       []Peer `json:"peers"`
-	SocksAddr   string `json:"socks_addr"`
-	DNSResolver string `json:"dns_resolver"`
-	DecoyURL    string `json:"decoy_url"`
+	Mode       string `json:"mode"`
+	ListenAddr string `json:"listen_addr"`
+	SocksAddr  string `json:"socks_addr"`
+	DecoyURL   string `json:"decoy_url"`
+	PrivateKey string `json:"private_key"`
+	Peers      []Peer `json:"peers"`
 }
 
-var GlobalConfig *Config
+var GlobalConfig Config
 
 func LoadConfig(path string) error {
 	file, err := os.ReadFile(path)
@@ -35,21 +34,9 @@ func LoadConfig(path string) error {
 	return json.Unmarshal(file, &GlobalConfig)
 }
 
-func GetFastestPeer() string {
-	var bestAddr string
-	bestRTT := time.Hour
-
-	for _, p := range GlobalConfig.Peers {
-		start := time.Now()
-		conn, err := net.DialTimeout("tcp", p.Addr, 2*time.Second)
-		if err == nil {
-			rtt := time.Since(start)
-			conn.Close()
-			if rtt < bestRTT {
-				bestRTT = rtt
-				bestAddr = p.Addr
-			}
-		}
+func GetFastestPeer() *Peer {
+	if len(GlobalConfig.Peers) == 0 {
+		return nil
 	}
-	return bestAddr
+	return &GlobalConfig.Peers[0]
 }

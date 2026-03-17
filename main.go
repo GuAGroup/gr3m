@@ -6,8 +6,8 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"flag"
-	"fmt"
 	"log"
 	"net"
 	"os"
@@ -21,14 +21,11 @@ import (
 )
 
 func main() {
-
-	configPath := flag.String("c", "config.json", "Путь к файлу конфигурации")
+	configPath := flag.String("c", "config.json", "path to config file")
 	flag.Parse()
 
-	log.Println("[GR3M] Инициализация протокола...")
-
 	if err := core.LoadConfig(*configPath); err != nil {
-		log.Fatalf("[FATAL] Ошибка загрузки конфига: %v", err)
+		log.Fatal(err)
 	}
 
 	cfg := core.GlobalConfig
@@ -37,24 +34,26 @@ func main() {
 	defer stop()
 
 	if cfg.Mode == "server" {
-		log.Printf("[SERVER] Запуск узла на %s (Маскировка: %s)\n", cfg.ListenAddr, cfg.DecoyURL)
-		go runServer(cfg.ListenAddr)
+		var privKey []byte
+		if cfg.PrivateKey != "" {
+			var err error
+			privKey, err = hex.DecodeString(cfg.PrivateKey)
+			if err != nil {
+				log.Fatal("invalid private key hex")
+			}
+		}
+		go runServer(cfg.ListenAddr, privKey)
 	} else {
-		log.Println("[CLIENT] Запуск клиентского модуля...")
-		go runClientLoop(ctx, cfg)
+		go runClientLoop(ctx, &cfg)
 	}
 
 	<-ctx.Done()
-	fmt.Println("\n[GR3M] Получен сигнал завершения. Закрытие всех соединений...")
-
-	time.Sleep(1 * time.Second)
-	log.Println("[GR3M] Работа завершена.")
 }
 
-func runServer(addr string) {
+func runServer(addr string, privKey []byte) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
-		log.Fatalf("[SERVER] Не удалось занять порт %s: %v", addr, err)
+		log.Fatal(err)
 	}
 	defer ln.Close()
 
@@ -65,14 +64,11 @@ func runServer(addr string) {
 		}
 
 		go func(c net.Conn) {
-
-			session, err := core.PerformHandshake(c, true)
+			session, err := core.PerformHandshake(c, true, "", privKey)
 			if err != nil {
-
 				server.TriggerHysteria(c)
 				return
 			}
-
 			server.HandleClient(c, session.EncryptionKey)
 		}(conn)
 	}
@@ -84,42 +80,33 @@ func runClientLoop(ctx context.Context, cfg *core.Config) {
 		case <-ctx.Done():
 			return
 		default:
-			log.Println("[CLIENT] Поиск самого быстрого сервера из списка пиров...")
-			fastest := core.GetFastestPeer()
-
-			if fastest == "" {
-				log.Println("[!] Все сервера недоступны. Повторная попытка через 5 секунд...")
+			peer := core.GetFastestPeer()
+			if peer == nil {
 				time.Sleep(5 * time.Second)
 				continue
 			}
 
-			log.Printf("[CLIENT] Выбран сервер: %s. Установка туннеля...\n", fastest)
-
-			err := startTunnel(fastest, cfg.SocksAddr)
+			err := startTunnel(peer, cfg.SocksAddr)
 			if err != nil {
-				log.Printf("[!] Ошибка туннеля: %v. Ищем новый сервер...\n", err)
 				time.Sleep(2 * time.Second)
 			}
 		}
 	}
 }
 
-func startTunnel(remote, socks string) error {
-	conn, err := net.DialTimeout("tcp", remote, 10*time.Second)
+func startTunnel(peer *core.Peer, socks string) error {
+	conn, err := net.DialTimeout("tcp", peer.Addr, 10*time.Second)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
-	session, err := core.PerformHandshake(conn, false)
+	session, err := core.PerformHandshake(conn, false, peer.PubKey, nil)
 	if err != nil {
-		return fmt.Errorf("handshake failed: %v", err)
+		return err
 	}
 
-	log.Printf("[SUCCESS] Туннель поднят. SOCKS5 прокси активен на %s\n", socks)
-
 	errChan := make(chan error, 1)
-
 	go client.StartSocks5(socks, conn, session.EncryptionKey, errChan)
 
 	return <-errChan
