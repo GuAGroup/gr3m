@@ -5,68 +5,88 @@
 package protocol
 
 import (
-	"crypto/rand"
+	crand "crypto/rand"
 	"encoding/binary"
+	"errors"
 	"fmt"
-	"io"
+	"math/rand/v2"
 
-	"hub.mos.ru/gua/crypto-lib/src/crypto"
+	"golang.org/x/crypto/chacha20poly1305"
 )
 
 type SessionState struct {
 	Key      []byte
-	InNonce  uint64
 	OutNonce uint64
+	InNonce  uint64
 }
 
-func (s *SessionState) Pack(streamID uint32, data []byte) ([]byte, error) {
-	s.OutNonce++
-	compressed, err := crypto.Compress(data)
+func (s *SessionState) Pack(id uint32, payload []byte) ([]byte, error) {
+	aead, err := chacha20poly1305.New(s.Key)
 	if err != nil {
 		return nil, err
 	}
 
-	padLen := 64 + (int(getRandomByte()) % 192)
-	raw := make([]byte, 16+len(compressed)+padLen)
+	nonce := make([]byte, chacha20poly1305.NonceSize)
+	binary.BigEndian.PutUint64(nonce[4:], s.OutNonce)
+	s.OutNonce++
 
-	binary.BigEndian.PutUint64(raw[0:8], s.OutNonce)
-	binary.BigEndian.PutUint32(raw[8:12], streamID)
-	binary.BigEndian.PutUint32(raw[12:16], uint32(len(compressed)))
-	copy(raw[16:16+len(compressed)], compressed)
+	header := make([]byte, 16)
+	binary.BigEndian.PutUint64(header[0:8], s.OutNonce)
+	binary.BigEndian.PutUint32(header[8:12], id)
+	binary.BigEndian.PutUint32(header[12:16], uint32(len(payload)))
 
-	_, _ = io.ReadFull(rand.Reader, raw[16+len(compressed):])
-	return crypto.EncryptChaCha(s.Key, raw)
+	rawPacket := append(header, payload...)
+
+	currentLen := len(rawPacket)
+	targetLen := ((currentLen + 63) / 64) * 64
+	paddingLen := targetLen - currentLen
+
+	extraJitter := rand.IntN(64)
+	totalPadding := paddingLen + extraJitter
+
+	padding := make([]byte, totalPadding)
+	if _, err := crand.Read(padding); err != nil {
+		return nil, err
+	}
+
+	finalRaw := append(rawPacket, padding...)
+	encrypted := aead.Seal(nil, nonce, finalRaw, nil)
+
+	return encrypted, nil
 }
 
-func (s *SessionState) Unpack(cipherFrame []byte) (uint32, []byte, error) {
-	decrypted, err := crypto.DecryptChaCha(s.Key, cipherFrame)
+func (s *SessionState) Unpack(encrypted []byte) (uint32, []byte, error) {
+	if len(encrypted) < chacha20poly1305.NonceSize {
+		return 0, nil, errors.New("packet too short")
+	}
+
+	aead, err := chacha20poly1305.New(s.Key)
 	if err != nil {
-		return 0, nil, fmt.Errorf("SECURITY_ERR: Integrity check failed")
+		return 0, nil, err
 	}
 
-	if len(decrypted) < 16 {
-		return 0, nil, fmt.Errorf("packet too short")
+	nonce := make([]byte, chacha20poly1305.NonceSize)
+	binary.BigEndian.PutUint64(nonce[4:], s.InNonce)
+
+	decrypted, err := aead.Open(nil, nonce, encrypted, nil)
+	if err != nil {
+		return 0, nil, fmt.Errorf("decryption failed: %v", err)
 	}
 
-	nonce := binary.BigEndian.Uint64(decrypted[0:8])
-	if nonce <= s.InNonce {
-		return 0, nil, fmt.Errorf("REPLAY_ATTACK_DETECTED")
+	seqNum := binary.BigEndian.Uint64(decrypted[0:8])
+	if seqNum <= s.InNonce {
+		return 0, nil, errors.New("replay attack detected")
 	}
-	s.InNonce = nonce
+	s.InNonce = seqNum
 
-	id := binary.BigEndian.Uint32(decrypted[8:12])
-	l := binary.BigEndian.Uint32(decrypted[12:16])
+	streamID := binary.BigEndian.Uint32(decrypted[8:12])
+	payloadLen := binary.BigEndian.Uint32(decrypted[12:16])
 
-	if int(l) > len(decrypted)-16 {
-		return 0, nil, fmt.Errorf("invalid length")
+	if int(16+payloadLen) > len(decrypted) {
+		return 0, nil, errors.New("invalid payload length")
 	}
 
-	data, err := crypto.Decompress(decrypted[16 : 16+l])
-	return id, data, err
-}
+	payload := decrypted[16 : 16+payloadLen]
 
-func getRandomByte() byte {
-	b := make([]byte, 1)
-	rand.Read(b)
-	return b[0]
+	return streamID, payload, nil
 }

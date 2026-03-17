@@ -9,7 +9,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"gr3m/key"
+	"math/rand"
 	"net"
+	"time"
 
 	utls "github.com/refraction-networking/utls"
 )
@@ -58,6 +60,8 @@ func secureExchange(conn net.Conn, isServer bool, expectedPubKey string, staticP
 			return nil, errors.New("invalid handshake")
 		}
 		copy(theirPub[:], buf[n-32:])
+
+		time.Sleep(time.Duration(rand.Intn(50)) * time.Millisecond)
 
 		resp := "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n"
 		conn.Write(append([]byte(resp), pub[:]...))

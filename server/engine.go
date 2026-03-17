@@ -10,6 +10,7 @@ import (
 	"gr3m/protocol"
 	"io"
 	"net"
+	"net/http"
 	"strconv"
 	"sync"
 	"time"
@@ -122,10 +123,14 @@ func sendRaw(c net.Conn, p []byte) error {
 	return err
 }
 
-func TriggerHysteria(c net.Conn) {
-	target, _ := net.Dial("tcp", "wikipedia.org:80")
-	if target != nil {
-		go io.Copy(target, c)
-		go io.Copy(c, target)
+func TriggerHysteria(conn net.Conn) {
+	defer conn.Close()
+
+	resp, err := http.Get("http://wikipedia.org")
+	if err != nil {
+		return
 	}
+	defer resp.Body.Close()
+
+	resp.Write(conn)
 }
