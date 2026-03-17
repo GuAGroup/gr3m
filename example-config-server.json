@@ -1,0 +1,7 @@
+{
+  "mode": "server",
+  "listen_addr": "0.0.0.0:8080",
+  "private_key": "ЗДЕСЬ_ТВОЙ_PRIVATE_KEY_ИЗ_ГЕНЕРАТОРА",
+  "decoy_url": "wikipedia.org:80",
+  "peers": []
+}

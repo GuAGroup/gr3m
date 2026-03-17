@@ -1,0 +1,11 @@
+{
+  "mode": "client",
+  "socks_addr": "127.0.0.1:1080",
+  "peers": [
+    {
+      "name": "Tiger-Node-Main",
+      "addr": "IP_ТВОЕГО_СЕРВЕРА:8080",
+      "pub_key": "ЗДЕСЬ_PUB_KEY_HASH_ИЗ_ГЕНЕРАТОРА"
+    }
+  ]
+}
