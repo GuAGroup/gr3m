@@ -1,22 +1,20 @@
+// Copyright (c) 2026 Ggroup
+// Use of this source code is governed by an MIT-style
+// license that can be found in the LICENSE file.
+
 package client
 
 import (
 	"encoding/binary"
+	"gr3m/protocol"
 	"net"
 	"sync/atomic"
-
-	"gr3m/protocol"
 )
 
-var lastStreamID uint32
-
 func StartSocks5(localAddr string, tunnel net.Conn, key []byte, errChan chan error) {
-	ln, err := net.Listen("tcp", localAddr)
-	if err != nil {
-		errChan <- err
-		return
-	}
-	defer ln.Close()
+	ln, _ := net.Listen("tcp", localAddr)
+	state := &protocol.SessionState{Key: key}
+	var streamCounter uint32
 
 	for {
 		bConn, err := ln.Accept()
@@ -26,7 +24,7 @@ func StartSocks5(localAddr string, tunnel net.Conn, key []byte, errChan chan err
 
 		go func(c net.Conn) {
 			defer c.Close()
-			id := atomic.AddUint32(&lastStreamID, 1)
+			id := atomic.AddUint32(&streamCounter, 1)
 
 			buf := make([]byte, 1024)
 			c.Read(buf)
@@ -37,14 +35,31 @@ func StartSocks5(localAddr string, tunnel net.Conn, key []byte, errChan chan err
 				return
 			}
 
-			p, _ := protocol.Pack(id, buf[:n], key)
+			p, _ := state.Pack(id, buf[:n])
 			if err := sendRaw(tunnel, p); err != nil {
 				errChan <- err
 				return
 			}
 
-			pipe(c, id, tunnel, key, errChan)
+			pipe(c, id, tunnel, state, errChan)
 		}(bConn)
+	}
+}
+
+func pipe(b net.Conn, id uint32, t net.Conn, s *protocol.SessionState, errChan chan error) {
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := b.Read(buf)
+		if n > 0 {
+			p, _ := s.Pack(id, buf[:n])
+			if err := sendRaw(t, p); err != nil {
+				errChan <- err
+				return
+			}
+		}
+		if err != nil {
+			break
+		}
 	}
 }
 
@@ -57,21 +72,4 @@ func sendRaw(conn net.Conn, packet []byte) error {
 	}
 	_, err = conn.Write(packet)
 	return err
-}
-
-func pipe(b net.Conn, id uint32, t net.Conn, key []byte, errChan chan error) {
-	buf := make([]byte, 32*1024)
-	for {
-		n, err := b.Read(buf)
-		if n > 0 {
-			p, _ := protocol.Pack(id, buf[:n], key)
-			if err := sendRaw(t, p); err != nil {
-				errChan <- err
-				return
-			}
-		}
-		if err != nil {
-			break
-		}
-	}
 }

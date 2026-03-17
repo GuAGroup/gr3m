@@ -2,10 +2,7 @@ module gr3m
 
 go 1.26.1
 
-require (
-	google.golang.org/protobuf v1.36.11
-	hub.mos.ru/gua/crypto-lib v0.0.0-20260316100546-3b8f5feaca87
-)
+require hub.mos.ru/gua/crypto-lib v0.0.0-20260316100546-3b8f5feaca87
 
 require (
 	github.com/andybalholm/brotli v1.2.0 // indirect
